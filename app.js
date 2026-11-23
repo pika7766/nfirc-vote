@@ -16,6 +16,7 @@ async function main() {
   if (initialLoading) initialLoading.textContent = text('common.loadingPage');
   const supabase = createClient(content);
   const isAdminPage = /\/admin\/?$/.test(window.location.pathname);
+  let latestDataLoadId = 0;
   const state = {
     movies: [],
     settings: null,
@@ -426,12 +427,10 @@ async function main() {
       const actions = make('div', { className: 'admin-tools' });
       actions.append(button(text('admin.revote'), 'button-secondary', async () => {
         await runAction(async () => {
-          const { error } = await supabase.rpc('admin_start_voting', {
-            p_votes_per_person: Number(state.settings.votes_per_person),
-          });
+          const { error } = await supabase.rpc('admin_prepare_revote');
           if (error) throw error;
           await loadData();
-          setNotice(text('admin.revoteStarted'));
+          setNotice(text('admin.revotePrepared'));
         });
       }, !state.movies.length || state.busy));
       settingsPanel.append(actions);
@@ -534,21 +533,30 @@ async function main() {
   }
 
   async function loadData() {
+    const loadId = ++latestDataLoadId;
     const hadLoadError = Boolean(state.loadError);
-    const [moviesResult, settingsResult] = await Promise.all([
-      supabase.from('movies').select('id,title,duration,speed,created_at').order('created_at', { ascending: true }),
-      supabase.from('app_settings').select('id,submissions_open,phase,votes_per_person').eq('id', true).single(),
-    ]);
-    if (moviesResult.error) throw moviesResult.error;
-    if (settingsResult.error) throw settingsResult.error;
-    const movies = moviesResult.data || [];
-    const settings = settingsResult.data;
+    let movies;
+    let settings;
     let votes = [];
-    if (settings.phase !== 'collecting') {
-      const { data, error } = await supabase.from('votes').select('movie_id');
-      if (error) throw error;
-      votes = data || [];
+    try {
+      const [moviesResult, settingsResult] = await Promise.all([
+        supabase.from('movies').select('id,title,duration,speed,created_at').order('created_at', { ascending: true }),
+        supabase.from('app_settings').select('id,submissions_open,phase,votes_per_person').eq('id', true).single(),
+      ]);
+      if (moviesResult.error) throw moviesResult.error;
+      if (settingsResult.error) throw settingsResult.error;
+      movies = moviesResult.data || [];
+      settings = settingsResult.data;
+      if (settings.phase !== 'collecting') {
+        const { data, error } = await supabase.from('votes').select('movie_id');
+        if (error) throw error;
+        votes = data || [];
+      }
+    } catch (error) {
+      if (loadId !== latestDataLoadId) return;
+      throw error;
     }
+    if (loadId !== latestDataLoadId) return;
     const sortedVotes = (items) => [...items].sort((left, right) => left.movie_id.localeCompare(right.movie_id));
     const changed = hadLoadError
       || JSON.stringify(state.movies) !== JSON.stringify(movies)

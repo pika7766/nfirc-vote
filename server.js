@@ -431,6 +431,26 @@ async function handleApi(request, response, url) {
       return true;
     }
 
+    if (method === 'POST' && pathname === '/api/admin/voting/prepare-revote') {
+      await readJson(request);
+      await withTransaction(async (client) => {
+        const { rows } = await client.query(
+          'select phase from public.app_settings where id = true for update',
+        );
+        if (!rows[0] || rows[0].phase !== 'finished') {
+          throw new HttpError(409, siteContent.api.noFinishedVoting);
+        }
+        await client.query('delete from public.ballots');
+        await client.query(
+          `update public.app_settings
+           set phase = 'collecting', submissions_open = false, updated_at = now()
+           where id = true`,
+        );
+      });
+      sendJson(response, 200, { success: true });
+      return true;
+    }
+
     if (method === 'POST' && pathname === '/api/admin/reset') {
       await readJson(request);
       await withTransaction(async (client) => {

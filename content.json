@@ -29,7 +29,7 @@
     "finished": "投票已結束"
   },
   "voter": {
-    "heroLabel": "MOVIE NIGHT · NFIRC",
+    "heroLabel": "MOVIE TIME · NFIRC",
     "collectingTitle": "這次期末聚餐，想看哪一部？",
     "votingTitle": "一起選出電影",
     "collectingDescription": "把想看的電影加進候選清單，等大家一起決定。",
@@ -78,7 +78,7 @@
     "finishVoting": "結束投票",
     "votingFinished": "投票已結束，最終結果已公布。",
     "revote": "重新投票",
-    "revoteStarted": "已清除上一輪結果並重新開始投票。",
+    "revotePrepared": "已清除上一輪投票結果，請設定投稿方式後開始新一輪投票。",
     "allMovies": "目前所有電影",
     "noMovies": "目前沒有電影。",
     "resetHeading": "重設社課資料",
@@ -125,6 +125,7 @@
     "invalidVoteLimit": "每人票數需為 1–5 票。",
     "needMovieToStart": "至少需要一部電影才能開始投票。",
     "noActiveVoting": "目前沒有進行中的投票。",
+    "noFinishedVoting": "只能在投票結束後重新投票。",
     "unknownAdminApi": "找不到管理 API。",
     "notFound": "找不到此頁面。",
     "serverError": "伺服器發生錯誤，請稍後再試。",

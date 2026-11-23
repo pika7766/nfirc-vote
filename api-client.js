@@ -115,6 +115,7 @@ export function createClient(content) {
       const endpoints = {
         admin_start_voting: ['/api/admin/voting/start', { votes_per_person: args?.p_votes_per_person }],
         admin_finish_voting: ['/api/admin/voting/finish', {}],
+        admin_prepare_revote: ['/api/admin/voting/prepare-revote', {}],
         admin_clear_all: ['/api/admin/reset', {}],
       };
       const endpoint = endpoints[name];
