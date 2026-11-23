@@ -221,7 +221,8 @@ function main() {
       await runAction(async () => {
         const { error } = await supabase.from('movies').insert({ title: movieTitle });
         if (error) throw error;
-        form.reset();
+        const currentTitle = app.querySelector('input[data-preserve="new-movie-title"]');
+        if (currentTitle) currentTitle.value = '';
         await loadData();
         setNotice('電影已加入候選清單。');
       });
@@ -307,7 +308,7 @@ function main() {
     usernameGroup.append(username);
     const passwordGroup = make('div', { className: 'field-group' });
     passwordGroup.append(make('label', { className: 'field-label', text: '密碼' }));
-    const password = make('input', { className: 'field', type: 'password', name: 'password', placeholder: '密碼', autocomplete: 'current-password', required: true });
+    const password = make('input', { className: 'field', type: 'password', name: 'password', placeholder: '密碼', autocomplete: 'current-password', required: true, preserve: 'admin-password' });
     passwordGroup.append(password);
     form.append(usernameGroup, passwordGroup);
     form.className = 'login-form';
