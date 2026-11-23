@@ -539,19 +539,11 @@ async function main() {
     let settings;
     let votes = [];
     try {
-      const [moviesResult, settingsResult] = await Promise.all([
-        supabase.from('movies').select('id,title,duration,speed,created_at').order('created_at', { ascending: true }),
-        supabase.from('app_settings').select('id,submissions_open,phase,votes_per_person').eq('id', true).single(),
-      ]);
-      if (moviesResult.error) throw moviesResult.error;
-      if (settingsResult.error) throw settingsResult.error;
-      movies = moviesResult.data || [];
-      settings = settingsResult.data;
-      if (settings.phase !== 'collecting') {
-        const { data, error } = await supabase.from('votes').select('movie_id');
-        if (error) throw error;
-        votes = data || [];
-      }
+      const { data, error } = await supabase.getData();
+      if (error) throw error;
+      movies = data.movies || [];
+      settings = data.settings;
+      votes = settings.phase === 'collecting' ? [] : data.votes || [];
     } catch (error) {
       if (loadId !== latestDataLoadId) return;
       throw error;
@@ -594,17 +586,19 @@ async function main() {
   }
 
   async function initialize() {
-    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError) {
-      state.loadError = sessionError.message;
-      render();
-      return;
+    if (isAdminPage) {
+      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        state.loadError = sessionError.message;
+        render();
+        return;
+      }
+      state.user = sessionData.session?.user?.email === ADMIN_EMAIL ? sessionData.session.user : null;
+      supabase.auth.onAuthStateChange((_event, session) => {
+        state.user = session?.user?.email === ADMIN_EMAIL ? session.user : null;
+        render();
+      });
     }
-    state.user = sessionData.session?.user?.email === ADMIN_EMAIL ? sessionData.session.user : null;
-    supabase.auth.onAuthStateChange((_event, session) => {
-      state.user = session?.user?.email === ADMIN_EMAIL ? session.user : null;
-      render();
-    });
     try {
       await loadData();
     } catch (error) {

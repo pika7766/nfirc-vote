@@ -66,6 +66,9 @@ export function createClient(content) {
 
   return {
     auth,
+    getData() {
+      return request('/api/data', undefined, messages);
+    },
     from(table) {
       const query = { method: 'GET', body: undefined, id: undefined };
       const builder = {
@@ -133,6 +136,8 @@ export function createClient(content) {
     channel() {
       const callbacks = [];
       let timer;
+      let refreshWhenVisible;
+      let refreshInProgress = false;
       const channel = {
         on(_event, _filter, callback) {
           callbacks.push(callback);
@@ -140,13 +145,22 @@ export function createClient(content) {
         },
         subscribe(callback) {
           callback?.('SUBSCRIBED');
-          timer = window.setInterval(() => {
-            if (callbacks[0]) void callbacks[0]();
-          }, 2000);
+          refreshWhenVisible = async () => {
+            if (document.visibilityState !== 'visible' || !callbacks[0] || refreshInProgress) return;
+            refreshInProgress = true;
+            try {
+              await callbacks[0]();
+            } finally {
+              refreshInProgress = false;
+            }
+          };
+          timer = window.setInterval(refreshWhenVisible, 2000);
+          document.addEventListener('visibilitychange', refreshWhenVisible);
           return channel;
         },
         unsubscribe() {
           window.clearInterval(timer);
+          if (refreshWhenVisible) document.removeEventListener('visibilitychange', refreshWhenVisible);
         },
       };
       return channel;

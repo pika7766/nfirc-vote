@@ -40,6 +40,8 @@ create table if not exists public.votes (
   created_at timestamptz not null default now()
 );
 
+create index if not exists votes_movie_id_idx on public.votes (movie_id);
+
 alter table public.votes
   drop constraint if exists votes_ballot_id_movie_id_key;
 

@@ -179,19 +179,21 @@ function checkLoginRate(request) {
 }
 
 async function getPublicData() {
-  const [settingsResult, moviesResult] = await Promise.all([
+  const [settingsResult, moviesResult, votesResult] = await Promise.all([
     pool.query('select id, submissions_open, phase, votes_per_person from public.app_settings where id = true'),
     pool.query('select id, title, duration, speed, created_at from public.movies order by created_at asc'),
+    pool.query(
+      `select movie_id, count(*)::int as count
+       from public.votes
+       where exists (
+         select 1 from public.app_settings where id = true and phase <> 'collecting'
+       )
+       group by movie_id`,
+    ),
   ]);
   const settings = settingsResult.rows[0];
   if (!settings) throw new Error('The app_settings row is missing.');
-  let votes = [];
-  if (settings.phase !== 'collecting') {
-    const result = await pool.query(
-      'select movie_id, count(*)::int as count from public.votes group by movie_id',
-    );
-    votes = result.rows;
-  }
+  const votes = settings.phase === 'collecting' ? [] : votesResult.rows;
   return { settings, movies: moviesResult.rows, votes };
 }
 
