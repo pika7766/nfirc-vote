@@ -6,7 +6,8 @@
 
 1. 在 Supabase 專案的 **SQL Editor → New query** 執行 [`supabase/schema.sql`](./supabase/schema.sql) 全文。若先前執行過舊版 schema，請再執行一次以移除前端 API 權限；網站改由 Node 後端直接連線。
 2. 在 Supabase 的 **Database → Connect** 複製 PostgreSQL connection string。Render 建議使用可長時間連線的 **Session pooler**。若字串仍含 `[YOUR-PASSWORD]`，以資料庫密碼替換；密碼若含特殊字元，需依 URI 格式編碼。
-3. 不要將 connection string 傳給瀏覽器、貼到聊天室或寫入程式檔案。
+3. 在 Supabase **Database Settings → SSL Configuration** 下載 CA certificate。此憑證用來驗證資料庫伺服器身分；不要停用 TLS 憑證驗證。
+4. 不要將 connection string 傳給瀏覽器、貼到聊天室或寫入程式檔案。
 
 ## 2. 部署到 Render
 
@@ -18,12 +19,19 @@
    - Health Check Path：`/api/health`
 3. 在 Render 的 **Environment** 設定以下變數：
    - `DATABASE_URL`：完整 Supabase PostgreSQL connection string
+   - `DATABASE_CA_CERT_BASE64`：下載的 Supabase CA certificate 轉成 Base64 後的內容
    - `ADMIN_PASSWORD`：管理員登入密碼（例如你先前設定的密碼）
    - `SESSION_SECRET`：至少 32 個字元的隨機密鑰
    - `VOTE_IP_HASH_SECRET`：另一組至少 32 個字元的隨機密鑰
 4. 儲存並部署。Render 的 HTTPS 網址就是網站網址；管理頁為該網址加上 `/admin`。
 
-產生隨機密鑰可在本機執行：
+在 Windows PowerShell 使用以下指令，將下載憑證檔轉成 Base64；把輸出貼入 Render 的 `DATABASE_CA_CERT_BASE64`，不要提交憑證檔或輸出到 Git：
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("C:\path\to\prod-ca-2021.crt"))
+```
+
+將範例路徑換成你下載的憑證檔位置。產生隨機密鑰則可在本機執行：
 
 ```sh
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"

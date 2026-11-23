@@ -3,12 +3,36 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { Pool } from 'pg';
 
-const requiredEnvironment = ['DATABASE_URL', 'ADMIN_PASSWORD', 'SESSION_SECRET', 'VOTE_IP_HASH_SECRET'];
+const requiredEnvironment = [
+  'DATABASE_URL',
+  'DATABASE_CA_CERT_BASE64',
+  'ADMIN_PASSWORD',
+  'SESSION_SECRET',
+  'VOTE_IP_HASH_SECRET',
+];
 for (const name of requiredEnvironment) {
   if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
 }
 if (process.env.SESSION_SECRET.length < 32 || process.env.VOTE_IP_HASH_SECRET.length < 32) {
   throw new Error('SESSION_SECRET and VOTE_IP_HASH_SECRET must each be at least 32 characters.');
+}
+
+let databaseUrl;
+try {
+  databaseUrl = new URL(process.env.DATABASE_URL);
+} catch {
+  throw new Error('DATABASE_URL must be a valid PostgreSQL connection string.');
+}
+if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol)) {
+  throw new Error('DATABASE_URL must use the postgres or postgresql protocol.');
+}
+for (const parameter of ['ssl', 'sslmode', 'sslrootcert', 'sslcert', 'sslkey']) {
+  databaseUrl.searchParams.delete(parameter);
+}
+
+const databaseCa = Buffer.from(process.env.DATABASE_CA_CERT_BASE64, 'base64').toString('utf8');
+if (!databaseCa.includes('-----BEGIN CERTIFICATE-----')) {
+  throw new Error('DATABASE_CA_CERT_BASE64 must contain the Supabase CA certificate encoded as base64.');
 }
 
 const ADMIN_EMAIL = 'nfirc@nfirc.local';
@@ -17,8 +41,8 @@ const SESSION_COOKIE = 'nfirc_session';
 const SESSION_LIFETIME_SECONDS = 8 * 60 * 60;
 const MAX_BODY_BYTES = 16 * 1024;
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: true },
+  connectionString: databaseUrl.toString(),
+  ssl: { ca: databaseCa, rejectUnauthorized: true },
   max: 5,
   connectionTimeoutMillis: 10000,
 });
