@@ -43,7 +43,7 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 
 - 管理員帳號名稱固定為 `nfirc`；密碼由後端的 `ADMIN_PASSWORD` 驗證，並以 HttpOnly、SameSite cookie 管理登入狀態。
 - `DATABASE_URL` 僅由 Node 後端讀取。SQL schema 會撤銷 Supabase `anon`、`authenticated` 和 `service_role` 對投票資料表的 API 權限，避免繞過後端直接讀寫。
-- 投票服務端以來源 IP 的 HMAC 識別同一輪投票者，並在資料庫交易中限制一個 IP 一次投票。
+- 投票服務端使用 Render `X-Forwarded-For` 中完整的用戶端 IP（不截斷網段）做 HMAC 識別；不會退回使用 Render 機器的 socket IP。若平台未提供有效的用戶端 IP，投票會明確回報錯誤。使用者若共用同一個對外公開 IP（例如同一個 NAT 出口），仍會被視為同一個 IP。
 - 使用者端每 2 秒向後端重新讀取資料以更新電影清單與票數。這是 Connection string 後端模式的輪詢更新，不使用瀏覽器直接連 PostgreSQL 或 Supabase Realtime。
 - 使用 Supabase Dashboard 的 SQL Editor 執行資料庫 schema；Render 不需要 Supabase anon key 或 service-role key。
 
@@ -52,3 +52,9 @@ node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 - 使用者可提交電影、查看清單與即時票數。
 - 管理員可編輯電影名稱、片長和 1x／1.25x 倍速、刪除電影、切換投稿、開始/結束/重新投票，以及清空資料。
 - 每人可投 1–5 票，且可將多票分配給同一部電影。
+
+## 網頁文字與 Logo
+
+- 網頁固定文字和 API 提示集中在根目錄的 [`content.json`](./content.json)，修改內容後重新部署即可套用。
+- 文字中的 `{count}`、`{title}` 等欄位是動態資料位置，請保留大括號與欄位名稱。
+- 頁首圖示使用根目錄的 [`nfirc_logo.png`](./nfirc_logo.png)；替換圖檔時請保留此檔名。

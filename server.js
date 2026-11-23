@@ -1,7 +1,14 @@
 import { createHmac, createHash, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
+import { isIP } from 'node:net';
 import { Pool } from 'pg';
+
+const siteContent = JSON.parse(await readFile(new URL('./content.json', import.meta.url), 'utf8'));
+
+function apiMessage(key, replacements) {
+  return siteContent.api[key].replace(/\{(\w+)\}/g, (_match, name) => String(replacements?.[name] ?? ''));
+}
 
 const requiredEnvironment = [
   'DATABASE_URL',
@@ -72,39 +79,46 @@ function requireSameOrigin(request) {
   try {
     originHost = new URL(origin).host;
   } catch {
-    throw new HttpError(403, '不允許的來源。');
+    throw new HttpError(403, siteContent.api.invalidOrigin);
   }
-  if (originHost !== request.headers.host) throw new HttpError(403, '不允許的來源。');
+  if (originHost !== request.headers.host) throw new HttpError(403, siteContent.api.invalidOrigin);
 }
 
 async function readJson(request) {
   if (!request.headers['content-type']?.toLowerCase().startsWith('application/json')) {
-    throw new HttpError(415, '請使用 JSON 格式送出資料。');
+    throw new HttpError(415, siteContent.api.jsonRequired);
   }
   let size = 0;
   const chunks = [];
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw new HttpError(413, '請求資料過大。');
+    if (size > MAX_BODY_BYTES) throw new HttpError(413, siteContent.api.bodyTooLarge);
     chunks.push(chunk);
   }
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'));
   } catch {
-    throw new HttpError(400, '請求資料格式錯誤。');
+    throw new HttpError(400, siteContent.api.invalidRequest);
   }
 }
 
 function requireObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new HttpError(400, '請求資料格式錯誤。');
+    throw new HttpError(400, siteContent.api.invalidRequest);
   }
   return value;
 }
 
 function requestIp(request) {
   const forwarded = request.headers['x-forwarded-for'];
-  return forwarded?.split(',')[0].trim() || request.socket.remoteAddress || 'unknown';
+  const clientIp = forwarded?.split(',')[0].trim();
+  if (!clientIp || isIP(clientIp) === 0) {
+    throw new HttpError(503, siteContent.api.clientIpUnavailable);
+  }
+  if (clientIp.toLowerCase().startsWith('::ffff:') && isIP(clientIp.slice(7)) === 4) {
+    return clientIp.slice(7);
+  }
+  return clientIp.toLowerCase();
 }
 
 function signedSession(payload) {
@@ -139,7 +153,7 @@ function getSession(request) {
 
 function requireAdmin(request) {
   const session = getSession(request);
-  if (!session) throw new HttpError(401, '請先登入管理員。');
+  if (!session) throw new HttpError(401, siteContent.api.adminRequired);
   return session;
 }
 
@@ -159,7 +173,7 @@ function checkLoginRate(request) {
   const ip = requestIp(request);
   const now = Date.now();
   const recent = (loginAttempts.get(ip) || []).filter((time) => now - time < 15 * 60 * 1000);
-  if (recent.length >= 10) throw new HttpError(429, '登入嘗試次數過多，請稍後再試。');
+  if (recent.length >= 10) throw new HttpError(429, siteContent.api.loginRateLimit);
   recent.push(now);
   loginAttempts.set(ip, recent);
 }
@@ -207,9 +221,9 @@ function validMovieInput(input) {
   const title = typeof input.title === 'string' ? input.title.trim() : '';
   const duration = typeof input.duration === 'string' ? input.duration.trim() : '';
   const speed = Number(input.speed ?? 1);
-  if (!title || title.length > 120) throw new HttpError(400, '電影名稱需為 1–120 個字。');
-  if (duration.length > 80) throw new HttpError(400, '片長不可超過 80 個字。');
-  if (![1, 1.25].includes(speed)) throw new HttpError(400, '播放倍速只能選 1 或 1.25。');
+  if (!title || title.length > 120) throw new HttpError(400, siteContent.api.invalidMovieTitle);
+  if (duration.length > 80) throw new HttpError(400, siteContent.api.durationTooLong);
+  if (![1, 1.25].includes(speed)) throw new HttpError(400, siteContent.api.invalidSpeed);
   return { title, duration: duration || null, speed };
 }
 
@@ -236,7 +250,7 @@ async function handleApi(request, response, url) {
     if (input.email !== ADMIN_EMAIL
         || typeof input.password !== 'string'
         || !equalSecret(input.password, process.env.ADMIN_PASSWORD)) {
-      throw new HttpError(401, '帳號或密碼錯誤。');
+      throw new HttpError(401, siteContent.api.invalidCredentials);
     }
     loginAttempts.delete(requestIp(request));
     const token = signedSession({
@@ -267,13 +281,13 @@ async function handleApi(request, response, url) {
     requireSameOrigin(request);
     const input = requireObject(await readJson(request));
     const title = typeof input.title === 'string' ? input.title.trim() : '';
-    if (!title || title.length > 120) throw new HttpError(400, '電影名稱需為 1–120 個字。');
+    if (!title || title.length > 120) throw new HttpError(400, siteContent.api.invalidMovieTitle);
     const movie = await withTransaction(async (client) => {
       const { rows } = await client.query(
         'select phase, submissions_open from public.app_settings where id = true for share',
       );
       if (!rows[0] || rows[0].phase !== 'collecting' || !rows[0].submissions_open) {
-        throw new HttpError(403, '目前沒有開放新增電影。');
+        throw new HttpError(403, siteContent.api.submissionsClosed);
       }
       const result = await client.query(
         'insert into public.movies (title) values ($1) returning id, title, duration, speed, created_at',
@@ -293,7 +307,7 @@ async function handleApi(request, response, url) {
         || movieIds.length < 1
         || movieIds.length > 5
         || !movieIds.every(validUuid)) {
-      throw new HttpError(400, '請選擇有效的電影票數。');
+      throw new HttpError(400, siteContent.api.invalidVoteSelection);
     }
     const voterHash = createHmac('sha256', process.env.VOTE_IP_HASH_SECRET)
       .update(requestIp(request))
@@ -303,13 +317,13 @@ async function handleApi(request, response, url) {
         'select phase, votes_per_person from public.app_settings where id = true for share',
       );
       const settings = rows[0];
-      if (!settings || settings.phase !== 'voting') throw new HttpError(409, '目前沒有開放投票。');
+      if (!settings || settings.phase !== 'voting') throw new HttpError(409, siteContent.api.votingClosed);
       if (movieIds.length !== settings.votes_per_person) {
-        throw new HttpError(400, `請分配剛好 ${settings.votes_per_person} 票。`);
+        throw new HttpError(400, apiMessage('voteCountMismatch', { count: settings.votes_per_person }));
       }
       const uniqueMovieIds = [...new Set(movieIds)];
       const movies = await client.query('select id from public.movies where id = any($1::uuid[])', [uniqueMovieIds]);
-      if (movies.rowCount !== uniqueMovieIds.length) throw new HttpError(400, '有電影已不存在，請重新整理。');
+      if (movies.rowCount !== uniqueMovieIds.length) throw new HttpError(400, siteContent.api.movieUnavailable);
 
       let ballot;
       try {
@@ -318,7 +332,7 @@ async function handleApi(request, response, url) {
           [voterHash],
         );
       } catch (error) {
-        if (error.code === '23505') throw new HttpError(409, '這個 IP 已經投過票了。');
+        if (error.code === '23505') throw new HttpError(409, siteContent.api.alreadyVoted);
         throw error;
       }
       await client.query(
@@ -336,13 +350,13 @@ async function handleApi(request, response, url) {
 
     if (method === 'PATCH' && pathname === '/api/admin/settings') {
       const input = requireObject(await readJson(request));
-      if (typeof input.submissions_open !== 'boolean') throw new HttpError(400, '設定值無效。');
+      if (typeof input.submissions_open !== 'boolean') throw new HttpError(400, siteContent.api.invalidSettings);
       const updated = await withTransaction(async (client) => {
         const { rows } = await client.query(
           'select phase from public.app_settings where id = true for update',
         );
         if (!rows[0] || rows[0].phase !== 'collecting') {
-          throw new HttpError(409, '投票開始後不能更改投稿設定。');
+          throw new HttpError(409, siteContent.api.cannotChangeSubmissions);
         }
         return client.query(
           'update public.app_settings set submissions_open = $1, updated_at = now() where id = true',
@@ -354,14 +368,14 @@ async function handleApi(request, response, url) {
     }
 
     const movieRoute = pathname.match(/^\/api\/admin\/movies\/([^/]+)$/);
-    if (movieRoute && !validUuid(movieRoute[1])) throw new HttpError(400, '電影識別碼無效。');
+    if (movieRoute && !validUuid(movieRoute[1])) throw new HttpError(400, siteContent.api.invalidMovieId);
     if (movieRoute && method === 'PATCH') {
       const input = validMovieInput(requireObject(await readJson(request)));
       const result = await pool.query(
         'update public.movies set title = $1, duration = $2, speed = $3 where id = $4 returning id',
         [input.title, input.duration, input.speed, movieRoute[1]],
       );
-      if (!result.rowCount) throw new HttpError(404, '找不到這部電影。');
+      if (!result.rowCount) throw new HttpError(404, siteContent.api.movieNotFound);
       sendJson(response, 200, { success: true });
       return true;
     }
@@ -371,10 +385,10 @@ async function handleApi(request, response, url) {
           'select phase from public.app_settings where id = true for update',
         );
         if (!rows[0] || rows[0].phase !== 'collecting') {
-          throw new HttpError(409, '投票期間不能刪除電影。');
+          throw new HttpError(409, siteContent.api.cannotDeleteDuringVoting);
         }
         const result = await client.query('delete from public.movies where id = $1', [movieRoute[1]]);
-        if (!result.rowCount) throw new HttpError(404, '找不到這部電影。');
+        if (!result.rowCount) throw new HttpError(404, siteContent.api.movieNotFound);
       });
       sendJson(response, 200, { success: true });
       return true;
@@ -384,7 +398,7 @@ async function handleApi(request, response, url) {
       const input = requireObject(await readJson(request));
       const amount = Number(input.votes_per_person);
       if (!Number.isInteger(amount) || amount < 1 || amount > 5) {
-        throw new HttpError(400, '每人票數需為 1–5 票。');
+        throw new HttpError(400, siteContent.api.invalidVoteLimit);
       }
       await withTransaction(async (client) => {
         const { rows } = await client.query(
@@ -392,7 +406,7 @@ async function handleApi(request, response, url) {
         );
         if (!rows[0]) throw new Error('The app_settings row is missing.');
         const movies = await client.query('select count(*)::int as count from public.movies');
-        if (movies.rows[0].count < 1) throw new HttpError(409, '至少需要一部電影才能開始投票。');
+        if (movies.rows[0].count < 1) throw new HttpError(409, siteContent.api.needMovieToStart);
         await client.query('delete from public.ballots');
         await client.query(
           `update public.app_settings
@@ -412,7 +426,7 @@ async function handleApi(request, response, url) {
          set phase = 'finished', submissions_open = false, updated_at = now()
          where id = true and phase = 'voting'`,
       );
-      if (!result.rowCount) throw new HttpError(409, '目前沒有進行中的投票。');
+      if (!result.rowCount) throw new HttpError(409, siteContent.api.noActiveVoting);
       sendJson(response, 200, { success: true });
       return true;
     }
@@ -433,7 +447,7 @@ async function handleApi(request, response, url) {
       return true;
     }
 
-    throw new HttpError(404, '找不到管理 API。');
+    throw new HttpError(404, siteContent.api.unknownAdminApi);
   }
 
   return false;
@@ -446,6 +460,8 @@ const staticFiles = new Map([
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/api-client.js', ['api-client.js', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
+  ['/content.json', ['content.json', 'application/json; charset=utf-8']],
+  ['/nfirc_logo.png', ['nfirc_logo.png', 'image/png']],
 ]);
 
 const server = createServer(async (request, response) => {
@@ -467,11 +483,11 @@ const server = createServer(async (request, response) => {
       response.end(content);
       return;
     }
-    sendJson(response, 404, { error: '找不到此頁面。' });
+    sendJson(response, 404, { error: siteContent.api.notFound });
   } catch (error) {
     const status = error instanceof HttpError ? error.status : 500;
     if (status >= 500) console.error('Request failed:', error.message);
-    sendJson(response, status, { error: status >= 500 ? '伺服器發生錯誤，請稍後再試。' : error.message });
+    sendJson(response, status, { error: status >= 500 ? siteContent.api.serverError : error.message });
   }
 });
 

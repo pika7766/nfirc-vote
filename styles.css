@@ -63,6 +63,7 @@ button { cursor: pointer; }
   background: var(--green);
   color: white;
   font-size: 18px;
+  object-fit: cover;
 }
 
 .text-link, .quiet-button {

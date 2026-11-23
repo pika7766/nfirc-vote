@@ -2,8 +2,19 @@ import { createClient } from './api-client.js';
 
 const app = document.querySelector('#app');
 const ADMIN_EMAIL = 'nfirc@nfirc.local';
-function main() {
-  const supabase = createClient();
+async function main() {
+  const contentResponse = await fetch('/content.json', { cache: 'no-cache' });
+  if (!contentResponse.ok) throw new Error(`Failed to load content.json (${contentResponse.status}).`);
+  const content = await contentResponse.json();
+  const text = (key, values) => {
+    const template = key.split('.').reduce((value, part) => value?.[part], content);
+    if (typeof template !== 'string') throw new Error(`Missing content string: ${key}`);
+    return template.replace(/\{(\w+)\}/g, (_match, name) => String(values?.[name] ?? ''));
+  };
+  document.title = content.documentTitle;
+  const initialLoading = app.querySelector('.loading');
+  if (initialLoading) initialLoading.textContent = text('common.loadingPage');
+  const supabase = createClient(content);
   const isAdminPage = /\/admin\/?$/.test(window.location.pathname);
   const state = {
     movies: [],
@@ -25,6 +36,8 @@ function main() {
       if (options.name) element.name = options.name;
       if (options.value !== undefined) element.value = options.value;
       if (options.href) element.href = options.href;
+      if (options.src) element.src = options.src;
+      if (options.alt !== undefined) element.alt = options.alt;
       if (options.placeholder) element.placeholder = options.placeholder;
       if (options.disabled) element.disabled = true;
       if (options.required) element.required = true;
@@ -93,26 +106,30 @@ function main() {
       const allocated = [...ballot.querySelectorAll('input[type="number"]')]
         .reduce((total, input) => total + (Number(input.value) || 0), 0);
       const status = ballot.querySelector('.hint');
-      if (status) status.textContent = `已分配 ${allocated} / ${allowed} 票`;
+      if (status) status.textContent = text('common.voteAllocation', { count: allocated, allowed });
       const submit = ballot.querySelector('button[type="submit"]');
       if (submit) submit.disabled = allocated !== allowed || state.busy;
     }
     if (saved.focused) app.querySelector(`[data-preserve="${CSS.escape(saved.focused)}"]`)?.focus();
   }
 
+  function movieMetadata(movie) {
+    return [movie.duration, text('common.movieSpeed', { speed: Number(movie.speed || 1) })].filter(Boolean).join(' · ');
+  }
+
   function render() {
     const saved = preserveInputs();
     app.replaceChildren();
     const header = make('header', { className: 'topbar' });
-    const brand = make('a', { className: 'brand', href: '/', ariaLabel: '回到電影票選首頁' });
-    brand.append(make('span', { className: 'brand-mark', text: '映' }), make('span', { text: 'NFIRC 社課電影票選' }));
+    const brand = make('a', { className: 'brand', href: '/', ariaLabel: text('common.homeAriaLabel') });
+    brand.append(make('img', { className: 'brand-mark', src: '/nfirc_logo.png', alt: text('logoAlt') }), make('span', { text: text('brandName') }));
     header.append(brand);
     if (isAdminPage && state.user) {
-      header.append(button('登出', 'button-secondary button-small', logout));
+      header.append(button(text('common.logout'), 'button-secondary button-small', logout));
     } else if (!isAdminPage) {
-      header.append(make('a', { className: 'text-link', href: '/admin', text: '管理員入口' }));
+      header.append(make('a', { className: 'text-link', href: '/admin', text: text('common.adminLink') }));
     } else {
-      header.append(make('a', { className: 'text-link', href: '/', text: '回到投票頁' }));
+      header.append(make('a', { className: 'text-link', href: '/', text: text('common.voterLink') }));
     }
     app.append(header);
 
@@ -120,9 +137,9 @@ function main() {
       app.append(make('section', { className: 'panel' }));
       const error = app.querySelector('.panel');
       error.append(make('p', { className: 'notice notice-error', text: state.loadError }));
-      error.append(button('重新載入', 'button-secondary', () => loadData()));
+      error.append(button(text('common.reload'), 'button-secondary', () => loadData()));
     } else if (!state.settings) {
-      app.append(make('p', { className: 'loading', text: '正在連線至 Supabase…' }));
+      app.append(make('p', { className: 'loading', text: text('common.loadingData') }));
     } else if (isAdminPage && !state.user) {
       renderLogin();
     } else if (isAdminPage) {
@@ -140,7 +157,7 @@ function main() {
       notice.textContent = state.notice;
       notice.classList.toggle('notice-error', state.noticeIsError);
     }
-    app.append(make('p', { className: 'footer-note', text: '資料即時同步 · powered by Supabase' }));
+    app.append(make('p', { className: 'footer-note', text: text('common.footer') }));
     restoreInputs(saved);
   }
 
@@ -160,10 +177,10 @@ function main() {
       const row = make('li', { className: 'movie-row' });
       const details = make('div', { className: 'movie-main' });
       details.append(make('span', { className: 'movie-title', text: movie.title }));
-      const meta = [movie.duration, movie.speed && Number(movie.speed) !== 1 ? `${movie.speed} 倍速` : ''].filter(Boolean).join(' · ');
+      const meta = movieMetadata(movie);
       if (meta) details.append(make('span', { className: 'movie-meta', text: meta }));
       row.append(details);
-      if (showResults) row.append(make('span', { className: 'movie-score', text: `${counts.get(movie.id) || 0} 票` }));
+      if (showResults) row.append(make('span', { className: 'movie-score', text: text('common.movieScore', { count: counts.get(movie.id) || 0 }) }));
       list.append(row);
     }
     return list;
@@ -171,17 +188,17 @@ function main() {
 
   function renderVoter() {
     const phase = state.settings.phase;
-    const title = phase === 'collecting' ? '這次社課，想看哪一部？' : '一起選出今晚的電影';
+    const title = phase === 'collecting' ? text('voter.collectingTitle') : text('voter.votingTitle');
     const description = phase === 'collecting'
-      ? '把想看的電影加進候選清單，等大家一起決定今晚的片單。'
-      : '候選片單已確定，選出你最想看的電影吧。';
-    app.append(hero('MOVIE NIGHT · NFIRC', title, description, phaseText(phase)));
-    const count = make('span', { className: 'count', text: `${state.movies.length} 部電影` });
-    const listPanel = panel(phase === 'collecting' ? '目前的候選片單' : '即時票數', count);
+      ? text('voter.collectingDescription')
+      : text('voter.votingDescription');
+    app.append(hero(text('voter.heroLabel'), title, description, phaseText(phase)));
+    const count = make('span', { className: 'count', text: text('common.movieCount', { count: state.movies.length }) });
+    const listPanel = panel(phase === 'collecting' ? text('voter.candidateList') : text('voter.liveResults'), count);
     if (state.movies.length) {
       listPanel.append(movieList(voteCounts(), phase !== 'collecting'));
     } else {
-      listPanel.append(make('div', { className: 'empty-state', text: phase === 'collecting' ? '還沒有電影，來當第一個提名的人吧。' : '目前沒有可投票的電影。' }));
+      listPanel.append(make('div', { className: 'empty-state', text: phase === 'collecting' ? text('voter.emptyCollecting') : text('voter.emptyVoting') }));
     }
     app.append(listPanel);
 
@@ -191,28 +208,28 @@ function main() {
       renderBallot();
     } else if (phase === 'collecting') {
       const paused = make('section', { className: 'panel' });
-      paused.append(make('p', { className: 'hint', text: '目前暫停新增電影，請稍後再來看看。' }));
+      paused.append(make('p', { className: 'hint', text: text('voter.submissionsPaused') }));
       app.append(paused);
     } else {
-      app.append(make('p', { className: 'hint', text: '投票已結束，以上是本次社課的最終結果。' }));
+      app.append(make('p', { className: 'hint', text: text('voter.finished') }));
     }
   }
 
   function renderSubmission() {
     const section = make('section', { className: 'panel' });
-    section.append(make('p', { className: 'section-label', text: '新增一部電影' }));
+    section.append(make('p', { className: 'section-label', text: text('voter.addMovie') }));
     const form = make('form', { className: 'field-row' });
     const title = make('input', {
       className: 'field',
       type: 'text',
       name: 'title',
-      placeholder: '輸入電影名稱',
+      placeholder: text('voter.moviePlaceholder'),
       required: true,
       max: 120,
       preserve: 'new-movie-title',
     });
     title.maxLength = 120;
-    const submit = make('button', { className: 'button', type: 'submit', text: '提交電影', disabled: state.busy });
+    const submit = make('button', { className: 'button', type: 'submit', text: text('voter.submitMovie'), disabled: state.busy });
     form.append(title, submit);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -224,7 +241,7 @@ function main() {
         const currentTitle = app.querySelector('input[data-preserve="new-movie-title"]');
         if (currentTitle) currentTitle.value = '';
         await loadData();
-        setNotice('電影已加入候選清單。');
+        setNotice(text('voter.movieSubmitted'));
       });
     });
     section.append(form);
@@ -234,9 +251,9 @@ function main() {
   function renderBallot() {
     const section = make('section', { className: 'panel' });
     const allowed = Number(state.settings.votes_per_person);
-    section.append(make('p', { className: 'section-label', text: `請分配 ${allowed} 票（每個 IP 可投票一次）` }));
+    section.append(make('p', { className: 'section-label', text: text('voter.ballotPrompt', { count: allowed }) }));
     if (!state.movies.length) {
-      section.append(make('p', { className: 'hint', text: '目前沒有可投票的電影。' }));
+      section.append(make('p', { className: 'hint', text: text('voter.emptyVoting') }));
       app.append(section);
       return;
     }
@@ -247,7 +264,8 @@ function main() {
       const row = make('li', { className: 'movie-row' });
       const movieInfo = make('span', { className: 'movie-main' });
       movieInfo.append(make('span', { className: 'movie-title', text: movie.title }));
-      if (movie.duration) movieInfo.append(make('span', { className: 'movie-meta', text: `${movie.duration}${Number(movie.speed) !== 1 ? ` · ${movie.speed} 倍速` : ''}` }));
+      const metadata = movieMetadata(movie);
+      movieInfo.append(make('span', { className: 'movie-meta', text: metadata }));
       const voteCount = make('input', {
         className: 'field vote-limit',
         type: 'number',
@@ -256,19 +274,19 @@ function main() {
         min: 0,
         max: allowed,
         step: 1,
-        ariaLabel: `${movie.title} 投票數`,
+        ariaLabel: text('voter.voteCountAriaLabel', { title: movie.title }),
         preserve: `vote-${movie.id}`,
       });
       voteCount.dataset.movieId = movie.id;
       row.append(movieInfo, voteCount);
       list.append(row);
     }
-    const status = make('p', { className: 'hint', text: `已分配 0 / ${allowed} 票` });
-    const submit = make('button', { className: 'button', type: 'submit', text: '送出我的票', disabled: state.busy });
+    const status = make('p', { className: 'hint', text: text('voter.voteAllocation', { count: 0, allowed }) });
+    const submit = make('button', { className: 'button', type: 'submit', text: text('voter.submitBallot'), disabled: state.busy });
     list.addEventListener('input', () => {
       const total = [...list.querySelectorAll('input[type="number"]')]
         .reduce((sum, input) => sum + (Number(input.value) || 0), 0);
-      status.textContent = `已分配 ${total} / ${allowed} 票`;
+      status.textContent = text('voter.voteAllocation', { count: total, allowed });
       submit.disabled = total !== allowed || state.busy;
     });
     form.append(list, status, submit);
@@ -291,7 +309,7 @@ function main() {
           throw error;
         }
         await loadData();
-        setNotice('投票成功，票數已即時更新。');
+        setNotice(text('voter.voteSubmitted'));
       });
     });
     section.append(form);
@@ -299,26 +317,26 @@ function main() {
   }
 
   function renderLogin() {
-    app.append(hero('ADMIN · NFIRC', '管理員登入', '登入後即可管理電影清單與投票設定。'));
+    app.append(hero(text('admin.loginHeroLabel'), text('admin.loginTitle'), text('admin.loginDescription')));
     const section = make('section', { className: 'panel' });
     const form = make('form');
     const usernameGroup = make('div', { className: 'field-group' });
-    usernameGroup.append(make('label', { className: 'field-label', text: '管理員帳號' }));
-    const username = make('input', { className: 'field', type: 'text', name: 'username', placeholder: '帳號', autocomplete: 'username', required: true, preserve: 'admin-username' });
+    usernameGroup.append(make('label', { className: 'field-label', text: text('admin.usernameLabel') }));
+    const username = make('input', { className: 'field', type: 'text', name: 'username', placeholder: text('admin.usernamePlaceholder'), autocomplete: 'username', required: true, preserve: 'admin-username' });
     usernameGroup.append(username);
     const passwordGroup = make('div', { className: 'field-group' });
-    passwordGroup.append(make('label', { className: 'field-label', text: '密碼' }));
-    const password = make('input', { className: 'field', type: 'password', name: 'password', placeholder: '密碼', autocomplete: 'current-password', required: true, preserve: 'admin-password' });
+    passwordGroup.append(make('label', { className: 'field-label', text: text('admin.passwordLabel') }));
+    const password = make('input', { className: 'field', type: 'password', name: 'password', placeholder: text('admin.passwordPlaceholder'), autocomplete: 'current-password', required: true, preserve: 'admin-password' });
     passwordGroup.append(password);
     form.append(usernameGroup, passwordGroup);
     form.className = 'login-form';
-    const submit = make('button', { className: 'button', type: 'submit', text: '登入管理員', disabled: state.busy });
+    const submit = make('button', { className: 'button', type: 'submit', text: text('admin.loginButton'), disabled: state.busy });
     submit.style.marginTop = '16px';
     form.append(submit);
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (username.value.trim() !== 'nfirc') {
-        setNotice('帳號或密碼錯誤。', true);
+        setNotice(text('admin.invalidCredentials'), true);
         return;
       }
       await runAction(async () => {
@@ -326,7 +344,7 @@ function main() {
           email: ADMIN_EMAIL,
           password: password.value,
         });
-        if (error || data.user?.email !== ADMIN_EMAIL) throw new Error('帳號或密碼錯誤。');
+        if (error || data.user?.email !== ADMIN_EMAIL) throw new Error(text('admin.invalidCredentials'));
         state.user = data.user;
         password.value = '';
         state.notice = '';
@@ -343,23 +361,23 @@ function main() {
 
   function renderAdmin() {
     const phase = state.settings.phase;
-    app.append(hero('ADMIN PANEL', '電影與投票管理', '管理候選電影、開放投稿，並即時掌握投票狀況。', phaseText(phase)));
+    app.append(hero(text('admin.heroLabel'), text('admin.title'), text('admin.description'), phaseText(phase)));
     const settingsPanel = make('section', { className: 'panel' });
     const heading = make('div', { className: 'panel-heading' });
-    heading.append(make('h2', { text: '整體設定' }));
+    heading.append(make('h2', { text: text('admin.settings') }));
     settingsPanel.append(heading);
 
     const setting = make('div', { className: 'setting-row' });
     const copy = make('div', { className: 'setting-copy' });
-    copy.append(make('strong', { text: '開放使用者提交電影' }), make('span', { text: phase === 'collecting' ? '只在收集階段開放投稿。' : '投票開始後會自動關閉投稿。' }));
+    copy.append(make('strong', { text: text('admin.submissionToggle') }), make('span', { text: phase === 'collecting' ? text('admin.submissionCollectingHelp') : text('admin.submissionVotingHelp') }));
     const toggle = make('input', { className: 'switch', type: 'checkbox', name: 'submissions_open', preserve: 'submissions-open', checked: state.settings.submissions_open, disabled: phase !== 'collecting' });
-    toggle.setAttribute('aria-label', '開放使用者提交電影');
+    toggle.setAttribute('aria-label', text('admin.submissionToggle'));
     toggle.addEventListener('change', async () => {
       await runAction(async () => {
         const { error } = await supabase.from('app_settings').update({ submissions_open: toggle.checked }).eq('id', true);
         if (error) throw error;
         await loadData();
-        setNotice(toggle.checked ? '已開放電影投稿。' : '已暫停電影投稿。');
+        setNotice(toggle.checked ? text('admin.submissionOpened') : text('admin.submissionClosed'));
       });
     });
     setting.append(copy, toggle);
@@ -370,50 +388,50 @@ function main() {
     if (phase === 'collecting') {
       const voteSetting = make('div', { className: 'field-row' });
       const group = make('div', { className: 'field-group' });
-      group.append(make('label', { className: 'field-label', text: '每人可投幾票' }));
+      group.append(make('label', { className: 'field-label', text: text('admin.votesPerPerson') }));
       const limit = make('select', { className: 'field vote-limit', name: 'votes_per_person', preserve: 'vote-limit' });
       const max = 5;
       for (let amount = 1; amount <= max; amount += 1) {
-        const option = make('option', { value: amount, text: `${amount} 票` });
+        const option = make('option', { value: amount, text: text('admin.voteOption', { count: amount }) });
         option.selected = amount === Number(state.settings.votes_per_person);
         limit.append(option);
       }
       group.append(limit);
-      const start = button('開始投票', '', async () => {
+      const start = button(text('admin.startVoting'), '', async () => {
         const amount = Number(limit.value);
         if (!state.movies.length) {
-          setNotice('至少需要一部電影才能開始投票。', true);
+          setNotice(text('admin.noMoviesToStart'), true);
           return;
         }
         await runAction(async () => {
           const { error } = await supabase.rpc('admin_start_voting', { p_votes_per_person: amount });
           if (error) throw error;
           await loadData();
-          setNotice('投票已開始，電影投稿已關閉。');
+          setNotice(text('admin.votingStarted'));
         });
       }, !state.movies.length || state.busy);
       voteSetting.append(group, start);
       settingsPanel.append(voteSetting);
-      settingsPanel.append(make('p', { className: 'hint', text: '可設定每人 1–5 票；投票者可將多票分配給同一部電影。開始投票會清除上一輪票數。' }));
+      settingsPanel.append(make('p', { className: 'hint', text: text('admin.votingHelp') }));
     } else if (phase === 'voting') {
-      settingsPanel.append(button('結束投票', '', async () => {
+      settingsPanel.append(button(text('admin.finishVoting'), '', async () => {
         await runAction(async () => {
           const { error } = await supabase.rpc('admin_finish_voting');
           if (error) throw error;
           await loadData();
-          setNotice('投票已結束，最終結果已公布。');
+          setNotice(text('admin.votingFinished'));
         });
       }, state.busy));
     } else {
       const actions = make('div', { className: 'admin-tools' });
-      actions.append(button('重新投票', 'button-secondary', async () => {
+      actions.append(button(text('admin.revote'), 'button-secondary', async () => {
         await runAction(async () => {
           const { error } = await supabase.rpc('admin_start_voting', {
             p_votes_per_person: Number(state.settings.votes_per_person),
           });
           if (error) throw error;
           await loadData();
-          setNotice('已清除上一輪結果並重新開始投票。');
+          setNotice(text('admin.revoteStarted'));
         });
       }, !state.movies.length || state.busy));
       settingsPanel.append(actions);
@@ -422,10 +440,10 @@ function main() {
 
     const moviePanel = make('section', { className: 'panel' });
     const movieHeading = make('div', { className: 'panel-heading' });
-    movieHeading.append(make('h2', { text: '目前所有電影' }), make('span', { className: 'count', text: `${state.movies.length} 部` }));
+    movieHeading.append(make('h2', { text: text('admin.allMovies') }), make('span', { className: 'count', text: text('common.adminMovieCount', { count: state.movies.length }) }));
     moviePanel.append(movieHeading);
     if (!state.movies.length) {
-      moviePanel.append(make('div', { className: 'empty-state', text: '目前沒有電影。' }));
+      moviePanel.append(make('div', { className: 'empty-state', text: text('admin.noMovies') }));
     } else {
       const list = make('ul', { className: 'movie-list' });
       for (const movie of state.movies) list.append(adminMovie(movie));
@@ -434,15 +452,15 @@ function main() {
     app.append(moviePanel);
 
     const resetPanel = make('section', { className: 'panel' });
-    resetPanel.append(make('p', { className: 'section-label', text: '重設社課資料' }));
-    resetPanel.append(make('p', { className: 'hint', text: '刪除所有電影和投票紀錄，並重新開放投稿。此操作無法復原。' }));
-    resetPanel.append(button('刪除目前所有資料', 'button-danger', async () => {
-      if (!window.confirm('確定刪除所有電影和投票紀錄？此操作無法復原。')) return;
+    resetPanel.append(make('p', { className: 'section-label', text: text('admin.resetHeading') }));
+    resetPanel.append(make('p', { className: 'hint', text: text('admin.resetHelp') }));
+    resetPanel.append(button(text('admin.resetButton'), 'button-danger', async () => {
+      if (!window.confirm(text('admin.confirmReset'))) return;
       await runAction(async () => {
         const { error } = await supabase.rpc('admin_clear_all');
         if (error) throw error;
         await loadData();
-        setNotice('資料已清除，現在可以重新投稿。');
+        setNotice(text('admin.resetComplete'));
       });
     }, state.busy));
     app.append(resetPanel);
@@ -452,37 +470,37 @@ function main() {
     const row = make('li', { className: 'movie-row' });
     const form = make('form', { className: 'admin-movie' });
     const fields = make('div', { className: 'admin-fields' });
-    const title = make('input', { className: 'field', type: 'text', name: 'title', value: movie.title, required: true, placeholder: '電影名稱', preserve: `title-${movie.id}` });
+    const title = make('input', { className: 'field', type: 'text', name: 'title', value: movie.title, required: true, placeholder: text('admin.movieTitlePlaceholder'), preserve: `title-${movie.id}` });
     title.maxLength = 120;
-    const duration = make('input', { className: 'field', type: 'text', name: 'duration', value: movie.duration || '', placeholder: '片長，例如 2 小時', preserve: `duration-${movie.id}` });
+    const duration = make('input', { className: 'field', type: 'text', name: 'duration', value: movie.duration || '', placeholder: text('admin.durationPlaceholder'), preserve: `duration-${movie.id}` });
     duration.maxLength = 80;
     const speed = make('select', { className: 'field', name: 'speed', preserve: `speed-${movie.id}` });
     for (const value of ['1', '1.25']) {
-      const option = make('option', { value, text: `${value} 倍速` });
+      const option = make('option', { value, text: text('admin.speedOption', { speed: value }) });
       option.selected = Number(movie.speed) === Number(value);
       speed.append(option);
     }
     const titleGroup = make('div', { className: 'field-group' });
-    titleGroup.append(make('label', { className: 'field-label', text: '電影名稱' }), title);
+    titleGroup.append(make('label', { className: 'field-label', text: text('admin.movieTitleLabel') }), title);
     const durationGroup = make('div', { className: 'field-group' });
-    durationGroup.append(make('label', { className: 'field-label', text: '片長' }), duration);
+    durationGroup.append(make('label', { className: 'field-label', text: text('admin.durationLabel') }), duration);
     const speedGroup = make('div', { className: 'field-group' });
-    speedGroup.append(make('label', { className: 'field-label', text: '播放倍速' }), speed);
+    speedGroup.append(make('label', { className: 'field-label', text: text('admin.speedLabel') }), speed);
     fields.append(titleGroup, durationGroup, speedGroup);
     const actions = make('div', { className: 'admin-actions' });
-    actions.append(button('刪除此電影', 'button-danger button-small', async () => {
-      if (!window.confirm(`確定刪除「${movie.title}」？`)) return;
+    actions.append(button(text('admin.deleteMovie'), 'button-danger button-small', async () => {
+      if (!window.confirm(text('admin.confirmDeleteMovie', { title: movie.title }))) return;
       await runAction(async () => {
         const { error } = await supabase.from('movies').delete().eq('id', movie.id);
         if (error) throw error;
         await loadData();
-        setNotice('電影已刪除。');
+        setNotice(text('admin.movieDeleted'));
       });
     }, state.busy || state.settings.phase !== 'collecting'));
-    actions.append(button('儲存編輯', 'button-secondary button-small', () => form.requestSubmit(), state.busy));
+    actions.append(button(text('admin.saveMovie'), 'button-secondary button-small', () => form.requestSubmit(), state.busy));
     form.append(fields, actions);
     if (state.settings.phase !== 'collecting') {
-      form.append(make('p', { className: 'hint', text: '投票開始後不可刪除電影，以保留已投票者的紀錄。' }));
+      form.append(make('p', { className: 'hint', text: text('admin.editingDisabled') }));
     }
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -494,7 +512,7 @@ function main() {
           .eq('id', movie.id);
         if (error) throw error;
         await loadData();
-        setNotice('電影資料已更新。');
+        setNotice(text('admin.movieSaved'));
       });
     });
     row.append(form);
@@ -510,29 +528,37 @@ function main() {
   }
 
   function phaseText(phase) {
-    if (phase === 'voting') return '投票進行中';
-    if (phase === 'finished') return '投票已結束';
-    return state.settings.submissions_open ? '開放投稿中' : '暫停投稿';
+    if (phase === 'voting') return text('phase.voting');
+    if (phase === 'finished') return text('phase.finished');
+    return state.settings.submissions_open ? text('phase.collecting') : text('phase.submissionsPaused');
   }
 
   async function loadData() {
-    state.loadError = '';
+    const hadLoadError = Boolean(state.loadError);
     const [moviesResult, settingsResult] = await Promise.all([
       supabase.from('movies').select('id,title,duration,speed,created_at').order('created_at', { ascending: true }),
       supabase.from('app_settings').select('id,submissions_open,phase,votes_per_person').eq('id', true).single(),
     ]);
     if (moviesResult.error) throw moviesResult.error;
     if (settingsResult.error) throw settingsResult.error;
-    state.movies = moviesResult.data || [];
-    state.settings = settingsResult.data;
-    if (state.settings.phase !== 'collecting') {
+    const movies = moviesResult.data || [];
+    const settings = settingsResult.data;
+    let votes = [];
+    if (settings.phase !== 'collecting') {
       const { data, error } = await supabase.from('votes').select('movie_id');
       if (error) throw error;
-      state.votes = data || [];
-    } else {
-      state.votes = [];
+      votes = data || [];
     }
-    render();
+    const sortedVotes = (items) => [...items].sort((left, right) => left.movie_id.localeCompare(right.movie_id));
+    const changed = hadLoadError
+      || JSON.stringify(state.movies) !== JSON.stringify(movies)
+      || JSON.stringify(state.settings) !== JSON.stringify(settings)
+      || JSON.stringify(sortedVotes(state.votes)) !== JSON.stringify(sortedVotes(votes));
+    state.loadError = '';
+    state.movies = movies;
+    state.settings = settings;
+    state.votes = votes;
+    if (changed) render();
   }
 
   async function runAction(action) {
@@ -542,7 +568,7 @@ function main() {
       await action();
     } catch (error) {
       console.error(error);
-      setNotice(error?.message || '操作失敗，請稍後再試。', true);
+      setNotice(error?.message || text('common.actionFailed'), true);
     } finally {
       state.busy = false;
       render();
@@ -554,7 +580,7 @@ function main() {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
       state.user = null;
-      setNotice('已登出。');
+      setNotice(text('common.loggedOut'));
       render();
     });
   }
@@ -574,7 +600,7 @@ function main() {
     try {
       await loadData();
     } catch (error) {
-      state.loadError = error?.message || '無法讀取資料，請確認 Supabase 設定。';
+      state.loadError = error?.message || text('common.dataLoadFailed');
       render();
     }
     supabase.channel('movie-vote-live')
@@ -583,7 +609,7 @@ function main() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'votes' }, refreshQuietly)
       .subscribe((status) => {
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          setNotice('即時連線中斷，請重新整理頁面。', true);
+          setNotice(text('common.realtimeDisconnected'), true);
         }
       });
   }
@@ -593,12 +619,16 @@ function main() {
       await loadData();
     } catch (error) {
       console.error(error);
-      setNotice(error?.message || '即時更新失敗。', true);
+      setNotice(error?.message || text('common.liveUpdateFailed'), true);
     }
   }
 
   initialize();
 }
 
-main();
+main().catch((error) => {
+  console.error('Failed to load the website content.', error);
+  const loading = app.querySelector('.loading');
+  if (loading) loading.textContent = '無法載入網站文字，請重新整理頁面。';
+});
 
