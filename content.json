@@ -41,7 +41,7 @@
     "submissionsPaused": "目前暫停新增電影，請稍後再來看看。",
     "finished": "投票已結束，以上是本次電影票選的最終結果。",
     "addMovie": "新增一部電影",
-    "moviePlaceholder": "輸入電影名稱",
+    "moviePlaceholder": "輸入電影名稱(片長需介於80~130分鐘，不可為限制級電影)",
     "submitMovie": "提交電影",
     "movieSubmitted": "電影已加入候選清單。",
     "ballotPrompt": "請分配 {count} 票（每個 IP 可投票一次）",
